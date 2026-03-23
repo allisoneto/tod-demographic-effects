@@ -9,7 +9,8 @@
 		filterTractsByTract,
 		buildFilteredData,
 		getScatterXValue,
-		tractStopsDensityForDisplay
+		tractStopsDensityForDisplay,
+		developmentAffordableUnitsCapped
 	} from '$lib/utils/derived.js';
 	import { periodCensusBounds } from '$lib/utils/periods.js';
 
@@ -25,7 +26,7 @@
 			}
 			const agg = m.get(key);
 			agg.new_units += d.hu;
-			agg.new_affordable += d.affrd_unit;
+			agg.new_affordable += developmentAffordableUnitsCapped(d);
 			agg.multifam += d.smmultifam + d.lgmultifam;
 
 			// Long census window: completions 1990–2020 (excludes 2021+ still tagged 10_20)
@@ -37,7 +38,7 @@
 				}
 				const a90 = m.get(k90);
 				a90.new_units += d.hu;
-				a90.new_affordable += d.affrd_unit;
+				a90.new_affordable += developmentAffordableUnitsCapped(d);
 				a90.multifam += d.smmultifam + d.lgmultifam;
 			}
 		}

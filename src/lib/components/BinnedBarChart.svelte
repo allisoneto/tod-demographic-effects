@@ -11,16 +11,18 @@
 		getTodTracts,
 		popWeightKey
 	} from '$lib/utils/derived.js';
+	import { splitChartTitle } from '$lib/utils/chartTitles.js';
 
 	let { panelState, domainOverride = null } = $props();
 
 	let containerEl = $state(null);
 
-	const margin = { top: 44, right: 20, bottom: 92, left: 60 };
+	const marginLeft = 60;
+	const marginRight = 20;
+	const marginBottom = 92;
 	const innerWidth = 500;
 	const innerHeight = 300;
-	const width = margin.left + innerWidth + margin.right;
-	const height = margin.top + innerHeight + margin.bottom;
+	const width = marginLeft + innerWidth + marginRight;
 
 	const plotKey = $derived(
 		JSON.stringify({
@@ -43,6 +45,8 @@
 			todMin: panelState.todMinStopsPerSqMi,
 			todAffPct: panelState.todMinAffordableSharePct,
 			nonTodAffPct: panelState.nonTodMinAffordableSharePct,
+			todStockPct: panelState.todMinStockIncreasePct,
+			nonTodStockPct: panelState.nonTodMinStockIncreasePct,
 			showCtrlBars: panelState.showNonTodBinnedBars,
 			domSync: domainOverride ? 'on' : 'off',
 			domY: domainOverride?.yDomain
@@ -84,6 +88,13 @@
 
 		const xLabel = meta.xVariables?.find((v) => v.key === xBase)?.label ?? xBase;
 		const yLabel = meta.yVariables?.find((v) => v.key === yBase)?.label ?? yBase;
+		const mainTitle = `${yLabel} by ${xLabel} (TOD analysis tracts, pop-weighted bins)`;
+		const titleLines = splitChartTitle(mainTitle, 44);
+		const titleAnchorX = marginLeft + innerWidth / 2;
+		/** Baseline of the first title line (px from top of SVG). */
+		const firstTitleBaseline = 26;
+		const subtitleY = firstTitleBaseline + 8 + titleLines.length * 16;
+		const chartOffsetTop = subtitleY + 22;
 
 		if (bins.length === 0) {
 			const p = root.append('p').attr('class', 'binned-empty');
@@ -147,24 +158,30 @@
 
 		const yScale = d3.scaleLinear().domain([domainLo, domainHi]).nice().range([innerHeight, 0]);
 
+		const height = chartOffsetTop + innerHeight + marginBottom;
+
 		const svg = root.append('svg')
 			.attr('viewBox', `0 0 ${width} ${height}`)
 			.attr('width', '100%').attr('height', 'auto')
 			.attr('preserveAspectRatio', 'xMidYMid meet')
 			.style('display', 'block');
 
-		svg.append('text')
-			.attr('x', margin.left + innerWidth / 2)
-			.attr('y', 16)
+		const titleText = svg
+			.append('text')
+			.attr('x', titleAnchorX)
+			.attr('y', firstTitleBaseline)
 			.attr('text-anchor', 'middle')
 			.attr('fill', 'var(--text)')
 			.attr('font-size', '13px')
-			.attr('font-weight', '600')
-			.text(`${yLabel} by ${xLabel} (TOD analysis tracts, pop-weighted bins)`);
+			.attr('font-weight', '600');
+		titleLines.forEach((line, i) => {
+			const ts = titleText.append('tspan').attr('x', titleAnchorX).text(line);
+			if (i > 0) ts.attr('dy', '1.15em');
+		});
 
 		svg.append('text')
-			.attr('x', margin.left + innerWidth / 2)
-			.attr('y', 30)
+			.attr('x', titleAnchorX)
+			.attr('y', subtitleY)
 			.attr('text-anchor', 'middle')
 			.attr('fill', 'var(--text-muted)')
 			.attr('font-size', '10px')
@@ -174,7 +191,7 @@
 					: 'Bins from TOD X quantiles only.'
 			);
 
-		const chart = svg.append('g').attr('transform', `translate(${margin.left},${margin.top})`);
+		const chart = svg.append('g').attr('transform', `translate(${marginLeft},${chartOffsetTop})`);
 
 		if (showCtrlBars) {
 			const leg = chart.append('g').attr('transform', `translate(${innerWidth - 108}, -4)`);

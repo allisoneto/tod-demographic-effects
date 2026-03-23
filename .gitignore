@@ -12,6 +12,9 @@ dist/
 .env.*
 !.env.example
 
+# HUD LIHTC full ZIP (CSV lives under data/raw/lihtc/ after extract)
+data/raw/lihtcpub.zip
+
 # Python (data processing scripts)
 .venv/
 .conda/

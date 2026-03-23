@@ -31,6 +31,9 @@ export function createPanelState(id) {
 		/** Min. share of MassBuilds new units that are affordable (0–100%); 0 = off. */
 		todMinAffordableSharePct = $state(0);
 		nonTodMinAffordableSharePct = $state(0);
+		/** Min. tract housing stock increase (%): MassBuilds new units / census HU at period start; 0 = off. */
+		todMinStockIncreasePct = $state(0);
+		nonTodMinStockIncreasePct = $state(0);
 
 		// ── Overall census tract universe ───────────────────────
 		minStopsPerSqMi = $state(0);
@@ -54,6 +57,10 @@ export function createPanelState(id) {
 		showBusStops = $state(false);
 		showRailStops = $state(false);
 		showCommuterRailStops = $state(false);
+		/** When true, tint choropleth tracts in the TOD analysis cohort (see FilterPanel). */
+		showMapTodCohortShade = $state(false);
+		/** When true, tint choropleth tracts in the non-TOD control cohort. */
+		showMapControlCohortShade = $state(false);
 
 		// ── Chart options ─────────────────────────────────────
 		trimOutliers = $state(true);

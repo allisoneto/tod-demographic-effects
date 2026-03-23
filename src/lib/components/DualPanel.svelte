@@ -81,6 +81,8 @@
 		rightPanel.nonTodTransitModes = { ...leftPanel.nonTodTransitModes };
 		rightPanel.todMinAffordableSharePct = leftPanel.todMinAffordableSharePct;
 		rightPanel.nonTodMinAffordableSharePct = leftPanel.nonTodMinAffordableSharePct;
+		rightPanel.todMinStockIncreasePct = leftPanel.todMinStockIncreasePct;
+		rightPanel.nonTodMinStockIncreasePct = leftPanel.nonTodMinStockIncreasePct;
 		rightPanel.minStopsPerSqMi = leftPanel.minStopsPerSqMi;
 		rightPanel.minPopulation = leftPanel.minPopulation;
 		rightPanel.minPopDensity = leftPanel.minPopDensity;
@@ -96,6 +98,8 @@
 		rightPanel.showBusStops = leftPanel.showBusStops;
 		rightPanel.showRailStops = leftPanel.showRailStops;
 		rightPanel.showCommuterRailStops = leftPanel.showCommuterRailStops;
+		rightPanel.showMapTodCohortShade = leftPanel.showMapTodCohortShade;
+		rightPanel.showMapControlCohortShade = leftPanel.showMapControlCohortShade;
 		rightPanel.trimOutliers = leftPanel.trimOutliers;
 		rightPanel.showNonTodScatter = leftPanel.showNonTodScatter;
 		rightPanel.showNonTodBinnedBars = leftPanel.showNonTodBinnedBars;
@@ -237,11 +241,17 @@
 
 	.panels {
 		display: grid;
-		grid-template-columns: 1fr 1fr;
+		grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
 		gap: 8px;
 		align-items: start;
 		flex: 1;
 		min-height: 0;
+	}
+
+	/* Prevent wide filter/chart content from overflowing the column and covering the sibling panel. */
+	.panel-slot {
+		min-width: 0;
+		max-width: 100%;
 	}
 
 	@media (max-width: 1199px) {

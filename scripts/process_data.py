@@ -2,6 +2,9 @@
 Pipeline: raw data -> dashboard JSON.
 
 Reads NHGIS census CSVs, MassBuilds CSV, and MBTA GeoJSON from data/raw/.
+Optional HUD ``LIHTCPUB.csv`` (see ``LIHTC_CSV_CANDIDATES``) imputes missing
+MassBuilds ``affrd_unit`` values where a Massachusetts LIHTC record matches
+by location, placed-in-service year, and unit count.
 Downloads 2020 MA census tract boundaries (cached after first run).
 Writes processed JSON to static/data/ for the SvelteKit dashboard.
 """
@@ -248,6 +251,173 @@ def load_nominal():
 # Step 4: MassBuilds → per-tract development aggregates
 # ═══════════════════════════════════════════════════════════════════
 
+# HUD LIHTCPUB.csv: https://www.huduser.gov/portal/datasets/lihtc/property.html
+# Place extracted ``LIHTCPUB.csv`` in ``data/raw/lihtc/`` (or ``data/raw/``).
+LIHTC_CSV_CANDIDATES = (RAW / "lihtc" / "LIHTCPUB.csv", RAW / "LIHTCPUB.csv")
+
+# Impute ``affrd_unit`` only when MassBuilds reports missing/0; match must satisfy
+# distance, completion vs. placed-in-service year, and unit-count similarity.
+LIHTC_MAX_DIST_M = 125.0
+LIHTC_YEAR_TOL = 3
+LIHTC_UNIT_RATIO_MIN = 0.5
+LIHTC_UNIT_RATIO_MAX = 1.55
+
+
+def resolve_lihtc_csv_path():
+    """Return the first existing HUD LIHTC CSV path, or None."""
+    for p in LIHTC_CSV_CANDIDATES:
+        if p.exists():
+            return p
+    return None
+
+
+def load_lihtc_ma_properties(path):
+    """Load Massachusetts LIHTC projects with coordinates and unit counts.
+
+    Parameters
+    ----------
+    path : Path
+        Path to ``LIHTCPUB.csv`` from HUD's LIHTCPUB archive.
+
+    Returns
+    -------
+    pandas.DataFrame or None
+        Columns include ``hud_id``, ``latitude``, ``longitude``, ``li_units``,
+        ``n_units``, ``yr_pis``. One row per ``hud_id`` (largest ``li_units``
+        kept when duplicates exist). None if the file cannot be read.
+    """
+    try:
+        df = pd.read_csv(path, encoding="latin-1", low_memory=False)
+    except OSError:
+        return None
+    st = df.get("proj_st")
+    if st is None:
+        return None
+    ma = df.loc[st.astype(str).str.strip().eq("MA")].copy()
+    for c in ("latitude", "longitude", "li_units", "n_units", "yr_pis"):
+        if c not in ma.columns:
+            return None
+        ma[c] = pd.to_numeric(ma[c], errors="coerce")
+    ma = ma[
+        ma["latitude"].notna()
+        & ma["longitude"].notna()
+        & (ma["li_units"] > 0)
+        & ma["n_units"].gt(0)
+    ]
+    # Sentinel year in HUD files when unknown
+    ma = ma[ma["yr_pis"].notna() & (ma["yr_pis"] != 9999)]
+    if ma.empty:
+        return None
+    # Prefer the richest duplicate per hud_id (multi-record edge cases).
+    ma = ma.sort_values("li_units", ascending=False).drop_duplicates(
+        subset=["hud_id"], keep="first"
+    )
+    return ma.reset_index(drop=True)
+
+
+def impute_massbuilds_affordable_from_lihtc(mb):
+    """Fill ``affrd_unit`` from HUD LIHTC where MassBuilds has no count.
+
+    Eligible rows are those with missing or zero ``affrd_unit`` and positive
+    ``hu``. Each MassBuilds row is paired with at most one LIHTC ``hud_id`` and
+    vice versa; pairs are chosen in order of increasing map distance after
+    applying distance, year, and unit-count gates (module constants).
+
+    Parameters
+    ----------
+    mb : pandas.DataFrame
+        MassBuilds slice with ``latitude``, ``longitude``, ``hu``,
+        ``completion_year``, ``affrd_unit``. ``affrd_source`` must already
+        be ``\"mb\"`` for all rows (set by the caller). Mutated in place:
+        ``affrd_unit`` is set to ``min(li_units, hu)`` for matches, and
+        ``affrd_source`` becomes ``\"lihtc\"`` for those rows.
+
+    Returns
+    -------
+    int
+        Number of projects imputed from LIHTC.
+
+    Notes
+    -----
+    LIHTC ``li_units`` are low-income tax-credit units, not identical to
+    every local “affordable” definition MassBuilds might use; imputation is
+    a best-effort bridge when MassBuilds reports no affordable count.
+    """
+    path = resolve_lihtc_csv_path()
+    if path is None:
+        return 0
+    li = load_lihtc_ma_properties(path)
+    if li is None or li.empty:
+        print(f"    WARNING: could not load MA rows from {path.name}")
+        return 0
+
+    aff = pd.to_numeric(mb["affrd_unit"], errors="coerce")
+    need_mask = (aff.isna() | (aff == 0)) & mb["hu"].gt(0)
+    if not need_mask.any():
+        return 0
+
+    mb_need = mb.loc[need_mask]
+    mb_geom = gpd.points_from_xy(
+        mb_need["longitude"], mb_need["latitude"], crs="EPSG:4326"
+    )
+    mb_g = gpd.GeoDataFrame(mb_need, geometry=mb_geom, crs="EPSG:4326").to_crs(
+        26986
+    )
+    li_geom = gpd.points_from_xy(
+        li["longitude"], li["latitude"], crs="EPSG:4326"
+    )
+    li_g = gpd.GeoDataFrame(li, geometry=li_geom, crs="EPSG:4326").to_crs(26986)
+
+    mx = mb_g.geometry.x.to_numpy()
+    my = mb_g.geometry.y.to_numpy()
+    lx = li_g.geometry.x.to_numpy()
+    ly = li_g.geometry.y.to_numpy()
+    dx = mx[:, np.newaxis] - lx[np.newaxis, :]
+    dy = my[:, np.newaxis] - ly[np.newaxis, :]
+    dist_m = np.sqrt(dx * dx + dy * dy)
+
+    cy = mb_g["completion_year"].to_numpy(dtype=float).reshape(-1, 1)
+    yp = li["yr_pis"].to_numpy(dtype=float).reshape(1, -1)
+    year_ok = np.abs(cy - yp) <= LIHTC_YEAR_TOL
+
+    hu = mb_g["hu"].to_numpy(dtype=float).reshape(-1, 1)
+    nu = li["n_units"].to_numpy(dtype=float).reshape(1, -1)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        ratio = hu / nu
+    ratio_ok = (ratio >= LIHTC_UNIT_RATIO_MIN) & (ratio <= LIHTC_UNIT_RATIO_MAX)
+
+    eligible = (dist_m <= LIHTC_MAX_DIST_M) & year_ok & ratio_ok
+    dist_masked = np.where(eligible, dist_m, np.inf)
+    best_j = np.argmin(dist_masked, axis=1)
+    min_d = np.min(dist_masked, axis=1)
+    mb_indices = mb_g.index.to_numpy()
+
+    pairs = []
+    for r in range(len(mb_g)):
+        if not np.isfinite(min_d[r]):
+            continue
+        pairs.append((float(min_d[r]), int(mb_indices[r]), int(best_j[r])))
+    pairs.sort(key=lambda x: x[0])
+
+    used_mb = set()
+    used_li = set()
+    li_units_arr = li["li_units"].to_numpy()
+
+    n_imputed = 0
+    for _, mb_idx, j in pairs:
+        if mb_idx in used_mb or j in used_li:
+            continue
+        used_mb.add(mb_idx)
+        used_li.add(j)
+        hu_val = int(mb.at[mb_idx, "hu"])
+        li_ct = int(li_units_arr[j])
+        mb.at[mb_idx, "affrd_unit"] = min(li_ct, hu_val)
+        mb.at[mb_idx, "affrd_source"] = "lihtc"
+        n_imputed += 1
+
+    return n_imputed
+
+
 def load_massbuilds(tracts_gdf):
     """Load MassBuilds and return (per-tract aggregates, individual project records).
 
@@ -288,6 +458,12 @@ def load_massbuilds(tracts_gdf):
     )
     mb = mb[mb["decade"] != ""].copy()
 
+    # Provenance for affordable unit counts (HUD fill-ins override in imputation).
+    mb["affrd_source"] = "mb"
+    n_lihtc = impute_massbuilds_affordable_from_lihtc(mb)
+    if n_lihtc:
+        print(f"    LIHTC imputation: filled affordable units for {n_lihtc} projects")
+
     geometry = [Point(xy) for xy in zip(mb["longitude"], mb["latitude"])]
     mb_gdf = gpd.GeoDataFrame(mb, geometry=geometry, crs="EPSG:4326")
 
@@ -306,6 +482,9 @@ def load_massbuilds(tracts_gdf):
 
     for c in ["singfamhu", "smmultifam", "lgmultifam", "affrd_unit"]:
         joined[c] = pd.to_numeric(joined[c], errors="coerce").fillna(0)
+
+    # MassBuilds sometimes reports affrd_unit > hu; cap so tract totals match denominators.
+    joined["affrd_unit"] = joined[["affrd_unit", "hu"]].min(axis=1)
 
     joined = joined.dropna(subset=["gisjoin"])
 
@@ -367,6 +546,7 @@ def load_massbuilds(tracts_gdf):
             "smmultifam": int(row["smmultifam"]),
             "lgmultifam": int(row["lgmultifam"]),
             "affrd_unit": int(row["affrd_unit"]),
+            "affrd_source": str(row.get("affrd_source", "mb")),
             "mixed_use": bool(row.get("mixed_use", False)),
             "rdv": bool(row.get("rdv", False)),
             "ovr55": bool(row.get("ovr55", False)),
@@ -567,13 +747,13 @@ def build_variable_meta():
             "key": "affordable_share",
             "label": "Affordable share of new dev",
             "source": "massbuilds",
-            "sourceLabel": "MassBuilds (filtered developments)",
+            "sourceLabel": "MassBuilds + HUD LIHTC (matched fills)",
         },
         {
             "key": "affordable_stock_pct",
             "label": "Affordable increase / housing stock (%)",
             "source": "massbuilds",
-            "sourceLabel": "MassBuilds (filtered developments)",
+            "sourceLabel": "MassBuilds + HUD LIHTC (matched fills)",
         },
         {
             "key": "multifam_stock_pct",
@@ -591,7 +771,7 @@ def build_variable_meta():
             "key": "new_affordable",
             "label": "New affordable units",
             "source": "massbuilds",
-            "sourceLabel": "MassBuilds (filtered developments)",
+            "sourceLabel": "MassBuilds + HUD LIHTC (matched fills)",
         },
     ]
     return {"yVariables": y_vars, "xVariables": x_vars}

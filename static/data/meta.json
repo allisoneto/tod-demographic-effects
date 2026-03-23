@@ -96,13 +96,13 @@
       "key": "affordable_share",
       "label": "Affordable share of new dev",
       "source": "massbuilds",
-      "sourceLabel": "MassBuilds (filtered developments)"
+      "sourceLabel": "MassBuilds + HUD LIHTC (matched fills)"
     },
     {
       "key": "affordable_stock_pct",
       "label": "Affordable increase / housing stock (%)",
       "source": "massbuilds",
-      "sourceLabel": "MassBuilds (filtered developments)"
+      "sourceLabel": "MassBuilds + HUD LIHTC (matched fills)"
     },
     {
       "key": "multifam_stock_pct",
@@ -120,7 +120,7 @@
       "key": "new_affordable",
       "label": "New affordable units",
       "source": "massbuilds",
-      "sourceLabel": "MassBuilds (filtered developments)"
+      "sourceLabel": "MassBuilds + HUD LIHTC (matched fills)"
     }
   ],
   "controlAverages": {

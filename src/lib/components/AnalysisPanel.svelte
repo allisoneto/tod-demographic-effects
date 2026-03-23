@@ -37,6 +37,8 @@
 			todMin: panelState.todMinStopsPerSqMi,
 			todAffPct: panelState.todMinAffordableSharePct,
 			nonTodAffPct: panelState.nonTodMinAffordableSharePct,
+			todStockPct: panelState.todMinStockIncreasePct,
+			nonTodStockPct: panelState.nonTodMinStockIncreasePct,
 			minPop: panelState.minPopulation,
 			minDens: panelState.minPopDensity,
 			minHU: panelState.minHuChange,
@@ -134,18 +136,21 @@
 		{/each}
 	</div>
 
-	<!-- Keep all views mounted but only show the active one.
-	     This avoids expensive D3 teardown/rebuild when switching tabs. -->
+	<!-- Mount only the active viz so hidden panes never overlap clicks and D3 always gets real layout width. -->
 	<div class="viz-surface" role="tabpanel">
-		<div class="tab-pane" class:tab-active={activeTab === 'map'}>
-			<MapView {panelState} {domainOverride} />
-		</div>
-		<div class="tab-pane" class:tab-active={activeTab === 'scatter'}>
-			<ScatterPlot {panelState} {domainOverride} />
-		</div>
-		<div class="tab-pane" class:tab-active={activeTab === 'bar'}>
-			<BinnedBarChart {panelState} {domainOverride} />
-		</div>
+		{#if activeTab === 'map'}
+			<div class="viz-pane">
+				<MapView {panelState} {domainOverride} />
+			</div>
+		{:else if activeTab === 'scatter'}
+			<div class="viz-pane">
+				<ScatterPlot {panelState} {domainOverride} />
+			</div>
+		{:else}
+			<div class="viz-pane">
+				<BinnedBarChart {panelState} {domainOverride} />
+			</div>
+		{/if}
 	</div>
 
 	<TractDetail {panelState} />
@@ -157,6 +162,8 @@
 		display: flex;
 		flex-direction: column;
 		gap: 10px;
+		min-width: 0;
+		max-width: 100%;
 		min-height: 0;
 		padding: 12px;
 		background: var(--bg-panel);
@@ -262,6 +269,8 @@
 	}
 
 	.viz-tabs {
+		position: relative;
+		z-index: 2;
 		display: flex;
 		flex-wrap: wrap;
 		gap: 4px;
@@ -290,6 +299,8 @@
 	}
 
 	.viz-surface {
+		position: relative;
+		isolation: isolate;
 		min-height: 280px;
 		border-radius: var(--radius-sm);
 		border: 1px solid var(--border);
@@ -297,11 +308,7 @@
 		overflow: hidden;
 	}
 
-	.tab-pane {
-		display: none;
-	}
-
-	.tab-active {
-		display: block;
+	.viz-pane {
+		min-width: 0;
 	}
 </style>

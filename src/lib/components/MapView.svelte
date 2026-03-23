@@ -11,6 +11,9 @@
 	} from '$lib/stores/data.svelte.js';
 	import {
 		buildFilteredData,
+		developmentAffordableUnitsCapped,
+		getNonTodTracts,
+		getTodTracts,
 		tractStopsDensityForDisplay,
 		transitModeUiLabel
 	} from '$lib/utils/derived.js';
@@ -26,6 +29,37 @@
 	const mapW = 500;
 	const mapH = 330;
 	const mapUid = Math.random().toString(36).slice(2, 11);
+
+	/** Choropleth cohort tints: align with policy page / ``--accent`` (TOD) and control slate. */
+	const MAP_TOD_COHORT_HEX = '#6c8cff';
+	const MAP_CTRL_COHORT_HEX = '#64748b';
+
+	/**
+	 * Linear RGB blend for overlaying cohort highlights on Viridis fills.
+	 *
+	 * Parameters
+	 * ----------
+	 * bottom : d3.RgbColor | string
+	 *     Existing fill (hex from color scale).
+	 * topHex : string
+	 *     Overlay color as ``#rrggbb``.
+	 * t : number
+	 *     Weight on ``topHex`` in ``[0, 1]``.
+	 *
+	 * Returns
+	 * -------
+	 * string
+	 *     Blended color as hex.
+	 */
+	function blendHex(bottom, topHex, t) {
+		const a = d3.rgb(bottom);
+		const b = d3.rgb(topHex);
+		return d3.rgb(
+			a.r * (1 - t) + b.r * t,
+			a.g * (1 - t) + b.g * t,
+			a.b * (1 - t) + b.b * t
+		).formatHex();
+	}
 
 	const structuralKey = $derived(
 		JSON.stringify({
@@ -46,6 +80,8 @@
 			todMin: panelState.todMinStopsPerSqMi,
 			todAffPct: panelState.todMinAffordableSharePct,
 			nonTodAffPct: panelState.nonTodMinAffordableSharePct,
+			todStockPct: panelState.todMinStockIncreasePct,
+			nonTodStockPct: panelState.nonTodMinStockIncreasePct,
 			devMin: panelState.minUnitsPerProject,
 			devMfPct: panelState.minDevMultifamilyRatioPct,
 			devAffPct: panelState.minDevAffordableRatioPct,
@@ -54,7 +90,9 @@
 			minDens: panelState.minPopDensity,
 			minHU: panelState.minHuChange,
 			domSync: domainOverride ? 'on' : 'off',
-			domColor: domainOverride?.colorDomain
+			domColor: domainOverride?.colorDomain,
+			mapTod: panelState.showMapTodCohortShade,
+			mapCtrl: panelState.showMapControlCohortShade
 		})
 	);
 
@@ -235,6 +273,11 @@
 
 		const values = filteredTracts.map((t) => Number(t[yKey])).filter((v) => Number.isFinite(v));
 
+		const todSet = new Set(getTodTracts(tractData, panelState).map((t) => t.gisjoin));
+		const controlSet = new Set(getNonTodTracts(tractData, panelState).map((t) => t.gisjoin));
+		const showTodShade = panelState.showMapTodCohortShade;
+		const showCtrlShade = panelState.showMapControlCohortShade;
+
 		let colorScale;
 		if (values.length === 0) {
 			colorScale = () => 'var(--bg-card)';
@@ -256,13 +299,36 @@
 		d3.select(containerEl).selectAll('path.tract-poly')
 			.attr('fill', (d) => {
 				const id = d.properties?.gisjoin;
-				if (!filteredSet.has(id)) return 'var(--bg-card)';
+				const inFiltered = filteredSet.has(id);
 				const v = lookup.get(id);
-				return Number.isFinite(v) ? colorScale(v) : 'var(--bg-card)';
+				const hasData = inFiltered && Number.isFinite(v);
+				let fill = hasData ? colorScale(v) : 'var(--bg-card)';
+				const inTod = todSet.has(id);
+				const inCtrl = controlSet.has(id);
+				// Cohort map tints: blend with Viridis when possible; solid tint when no Y value.
+				if (showTodShade && inTod) {
+					fill =
+						typeof fill === 'string' && fill.startsWith('#')
+							? blendHex(fill, MAP_TOD_COHORT_HEX, 0.4)
+							: MAP_TOD_COHORT_HEX;
+				} else if (showCtrlShade && inCtrl) {
+					fill =
+						typeof fill === 'string' && fill.startsWith('#')
+							? blendHex(fill, MAP_CTRL_COHORT_HEX, 0.4)
+							: MAP_CTRL_COHORT_HEX;
+				}
+				return fill;
 			})
 			.attr('fill-opacity', (d) => {
 				const id = d.properties?.gisjoin;
-				return filteredSet.has(id) && Number.isFinite(lookup.get(id)) ? 0.9 : 0.25;
+				const inFiltered = filteredSet.has(id);
+				const hasData = inFiltered && Number.isFinite(lookup.get(id));
+				const inTod = todSet.has(id);
+				const inCtrl = controlSet.has(id);
+				const cohortLit =
+					(showTodShade && inTod) || (showCtrlShade && inCtrl);
+				if (cohortLit && !hasData) return 0.88;
+				return hasData ? 0.9 : 0.25;
 			});
 
 		// Legend
@@ -310,6 +376,52 @@
 		legendG.append('text').attr('x', legW / 2).attr('y', -4)
 			.attr('text-anchor', 'middle').attr('fill', 'var(--text-muted)').attr('font-size', '11px')
 			.text(yLabel);
+
+		// Cohort tint legend (below colorbar title)
+		if (showTodShade || showCtrlShade) {
+			let lx = 0;
+			const ly = -22;
+			const cohortG = legendG.append('g').attr('class', 'map-cohort-legend');
+			if (showTodShade) {
+				cohortG
+					.append('rect')
+					.attr('x', lx)
+					.attr('y', ly)
+					.attr('width', 12)
+					.attr('height', 12)
+					.attr('rx', 2)
+					.attr('fill', MAP_TOD_COHORT_HEX)
+					.attr('stroke', 'var(--border)')
+					.attr('stroke-width', 0.5);
+				cohortG
+					.append('text')
+					.attr('x', lx + 16)
+					.attr('y', ly + 10)
+					.attr('fill', 'var(--text-muted)')
+					.attr('font-size', '10px')
+					.text('TOD tint');
+				lx += 78;
+			}
+			if (showCtrlShade) {
+				cohortG
+					.append('rect')
+					.attr('x', lx)
+					.attr('y', ly)
+					.attr('width', 12)
+					.attr('height', 12)
+					.attr('rx', 2)
+					.attr('fill', MAP_CTRL_COHORT_HEX)
+					.attr('stroke', 'var(--border)')
+					.attr('stroke-width', 0.5);
+				cohortG
+					.append('text')
+					.attr('x', lx + 16)
+					.attr('y', ly + 10)
+					.attr('fill', 'var(--text-muted)')
+					.attr('font-size', '10px')
+					.text('Control tint');
+			}
+		}
 
 		containerEl.__mapLookup = lookup;
 		containerEl.__mapFilteredSet = filteredSet;
@@ -485,7 +597,11 @@
 		const lines = [{ bold: true, text: d.name || 'Development' }];
 		lines.push({ bold: false, text: `${d.municipal}` });
 		lines.push({ bold: false, text: `Units: ${d.hu}` });
-		if (d.affrd_unit > 0) lines.push({ bold: false, text: `Affordable: ${d.affrd_unit}` });
+		const affCap = developmentAffordableUnitsCapped(d);
+		if (affCap > 0) {
+			const src = d.affrd_source === 'lihtc' ? ' (HUD LIHTC)' : '';
+			lines.push({ bold: false, text: `Affordable: ${affCap}${src}` });
+		}
 		lines.push({ bold: false, text: d.mixed_use ? 'Mixed-use' : 'Residential' });
 		if (d.rdv) lines.push({ bold: false, text: 'Redevelopment' });
 		tooltip = { visible: true, x: event.clientX, y: event.clientY, lines };

@@ -6,22 +6,24 @@
 		buildFilteredData,
 		getScatterXValue,
 		computeRegression,
+		filterPointsTenSigmaMarginals,
 		getNonTodTracts,
 		getTodTracts
 	} from '$lib/utils/derived.js';
+	import { splitChartTitle } from '$lib/utils/chartTitles.js';
 
 	let { panelState, domainOverride = null } = $props();
 
 	let containerEl = $state(null);
 	let tooltip = $state({ visible: false, x: 0, y: 0, lines: [] });
 
-	const margin = { top: 48, right: 20, bottom: 50, left: 60 };
+	const marginLeft = 60;
+	const marginRight = 20;
+	const marginBottom = 50;
 	/** non-TOD OLS line color (contrasts with TOD accent in light/dark). */
 	const REG_NON_TOD_STROKE = '#D3D3D3';
 	const innerWidth = 500;
 	const innerHeight = 350;
-	const width = margin.left + innerWidth + margin.right;
-	const height = margin.top + innerHeight + margin.bottom;
 
 	const plotKey = $derived(
 		JSON.stringify({
@@ -44,6 +46,8 @@
 			todMin: panelState.todMinStopsPerSqMi,
 			todAffPct: panelState.todMinAffordableSharePct,
 			nonTodAffPct: panelState.nonTodMinAffordableSharePct,
+			todStockPct: panelState.todMinStockIncreasePct,
+			nonTodStockPct: panelState.nonTodMinStockIncreasePct,
 			trim: panelState.trimOutliers,
 			showNT: panelState.showNonTodScatter,
 			domSync: domainOverride ? 'on' : 'off',
@@ -117,8 +121,14 @@
 				nonTodPoints.push({ tract: t, x: xVal, y: yVal });
 			}
 		}
+
+		// OLS lines use ±10σ marginal outlier screen; all TOD / non-TOD points stay plotted.
+		const pointsForReg = filterPointsTenSigmaMarginals(points);
+		const nonTodPointsForReg = filterPointsTenSigmaMarginals(nonTodPoints);
 		const nonTodReg =
-			nonTodPoints.length >= 2 ? computeRegression(nonTodPoints) : { slope: NaN, intercept: NaN, r2: 0 };
+			nonTodPointsForReg.length >= 2
+				? computeRegression(nonTodPointsForReg)
+				: { slope: NaN, intercept: NaN, r2: 0 };
 
 		if (points.length === 0) {
 			const pe = root.append('p').attr('class', 'scatter-empty');
@@ -160,7 +170,29 @@
 			.domain(yDomain[0] === undefined ? [0, 1] : yDomain).nice()
 			.range([innerHeight, 0]);
 
-		const { slope, intercept, r2 } = computeRegression(points);
+		const { slope, intercept, r2 } =
+			pointsForReg.length >= 2 ? computeRegression(pointsForReg) : { slope: NaN, intercept: NaN, r2: 0 };
+
+		const showNonTodReg =
+			panelState.showNonTodScatter &&
+			nonTodPointsForReg.length >= 2 &&
+			Number.isFinite(nonTodReg.slope) &&
+			Number.isFinite(nonTodReg.intercept);
+
+		const titleFull = `${yLabel} vs ${xLabel} (TOD analysis tracts)`;
+		const scatterTitleLines = splitChartTitle(titleFull, 44);
+		const titleAnchorX = marginLeft + innerWidth / 2;
+		const firstTitleBaseline = 22;
+		let legendBlockH = 8;
+		if (pointsForReg.length >= 2 && Number.isFinite(slope) && Number.isFinite(intercept)) {
+			legendBlockH += 42;
+		}
+		if (showNonTodReg) legendBlockH += 42;
+		const titleBlockBottom = firstTitleBaseline + 8 + scatterTitleLines.length * 16;
+		const legendY0 = titleBlockBottom + 6;
+		const chartOffsetTop = legendY0 + legendBlockH + 6;
+		const width = marginLeft + innerWidth + marginRight;
+		const height = chartOffsetTop + innerHeight + marginBottom;
 
 		const svg = root.append('svg')
 			.attr('viewBox', `0 0 ${width} ${height}`)
@@ -168,8 +200,28 @@
 			.attr('preserveAspectRatio', 'xMidYMid meet')
 			.style('display', 'block');
 
+		const plotTitle = svg
+			.append('text')
+			.attr('x', titleAnchorX)
+			.attr('y', firstTitleBaseline)
+			.attr('text-anchor', 'middle')
+			.attr('fill', 'var(--text)')
+			.attr('font-size', '13px')
+			.attr('font-weight', '600');
+		scatterTitleLines.forEach((line, i) => {
+			const ts = plotTitle.append('tspan').attr('x', titleAnchorX).text(line);
+			if (i > 0) ts.attr('dy', '1.15em');
+		});
+
+		// OLS legend: top-right of the SVG (directly under the HTML checkbox row).
+		const legRoot = svg
+			.append('g')
+			.attr('class', 'scatter-reg-legend')
+			.attr('transform', `translate(${width - 8}, ${legendY0})`)
+			.attr('pointer-events', 'none');
+
 		const chart = svg.append('g')
-			.attr('transform', `translate(${margin.left},${margin.top})`);
+			.attr('transform', `translate(${marginLeft},${chartOffsetTop})`);
 
 		chart.append('g').attr('transform', `translate(0,${innerHeight})`)
 			.call(d3.axisBottom(xScale).ticks(8))
@@ -194,7 +246,7 @@
 		const regLinesG = chart.append('g').attr('class', 'scatter-reg-lines').attr('pointer-events', 'none');
 
 		// TOD OLS — solid accent, heavy stroke (draw first so non-TOD can read on top in legend only; lines don't overlap much)
-		if (points.length >= 2 && Number.isFinite(slope) && Number.isFinite(intercept)) {
+		if (pointsForReg.length >= 2 && Number.isFinite(slope) && Number.isFinite(intercept)) {
 			regLinesG
 				.append('line')
 				.attr('class', 'scatter-reg-line-tod')
@@ -207,12 +259,7 @@
 				.attr('stroke-linecap', 'round');
 		}
 
-		// non-TOD OLS — contrasting blue, dashed (only when grey points shown)
-		const showNonTodReg =
-			panelState.showNonTodScatter &&
-			nonTodPoints.length >= 2 &&
-			Number.isFinite(nonTodReg.slope) &&
-			Number.isFinite(nonTodReg.intercept);
+		// non-TOD OLS — contrasting stroke, dashed (only when grey points shown)
 		if (showNonTodReg) {
 			const ns = nonTodReg.slope;
 			const ni = nonTodReg.intercept;
@@ -332,22 +379,15 @@
 				panelState.toggleTract(d.tract.gisjoin);
 			});
 
-		// Legend for OLS lines: top-left, stacked lines (avoids long single-line clip on narrow panels).
-		const leg = chart
-			.append('g')
-			.attr('class', 'scatter-reg-legend')
-			.attr('transform', 'translate(4, -44)')
-			.attr('pointer-events', 'none');
-
 		const legLineW = 24;
 		let legYOffset = 0;
 		function addRegLegendEntry(stroke, dash, lines) {
-			const g = leg.append('g').attr('transform', `translate(0, ${legYOffset})`);
+			const g = legRoot.append('g').attr('transform', `translate(0, ${legYOffset})`);
 			const ln = g
 				.append('line')
-				.attr('x1', 0)
+				.attr('x1', -118)
 				.attr('y1', 6)
-				.attr('x2', legLineW)
+				.attr('x2', -118 + legLineW)
 				.attr('y2', 6)
 				.attr('stroke', stroke)
 				.attr('stroke-width', 2.5)
@@ -355,32 +395,34 @@
 			if (dash) ln.attr('stroke-dasharray', dash);
 			const tx = g
 				.append('text')
-				.attr('x', legLineW + 5)
+				.attr('x', -6)
 				.attr('y', 6)
+				.attr('text-anchor', 'end')
 				.attr('fill', 'var(--text)')
 				.attr('font-size', '10px')
 				.attr('font-weight', '600');
 			lines.forEach((line, i) => {
 				tx.append('tspan')
-					.attr('x', legLineW + 5)
+					.attr('x', -6)
 					.attr('dy', i === 0 ? '0.32em' : '1.12em')
 					.text(line);
 			});
 			legYOffset += 8 + lines.length * 11 + 2;
 		}
 
-		if (points.length >= 2 && Number.isFinite(slope) && Number.isFinite(intercept)) {
-			addRegLegendEntry('var(--accent)', null, [
+		if (pointsForReg.length >= 2 && Number.isFinite(slope) && Number.isFinite(intercept)) {
+			const nLines = [
 				'TOD OLS',
 				`R\u00b2 ${d3.format('.2f')(r2)}`,
-				`n = ${points.length}`
-			]);
+				`n = ${pointsForReg.length}${pointsForReg.length < points.length ? ` (\u226410\u03c3 of ${points.length})` : ''}`
+			];
+			addRegLegendEntry('var(--accent)', null, nLines);
 		}
 		if (showNonTodReg) {
 			addRegLegendEntry(REG_NON_TOD_STROKE, '10 5', [
 				'non-TOD OLS',
 				`R\u00b2 ${d3.format('.2f')(nonTodReg.r2)}`,
-				`n = ${nonTodPoints.length}`
+				`n = ${nonTodPointsForReg.length}${nonTodPointsForReg.length < nonTodPoints.length ? ` (\u226410\u03c3 of ${nonTodPoints.length})` : ''}`
 			]);
 		}
 
@@ -406,9 +448,9 @@
 
 <div class="scatter-wrap">
 	<div class="scatter-controls">
-		<label class="trim-toggle">
+		<label class="trim-toggle" title="Axes: when on, exclude &gt;10σ on each margin from domain. OLS lines always fit after the same ±10σ screen on X and Y.">
 			<input type="checkbox" bind:checked={panelState.trimOutliers} />
-			<span>Trim axis to exclude &gt;10&sigma; outliers</span>
+			<span>Trim axis to exclude &gt;10&sigma; outliers (OLS always uses ±10&sigma; fit)</span>
 		</label>
 		<label class="trim-toggle" title="Grey points use the non-TOD control cohort from Census tract filtering">
 			<input type="checkbox" bind:checked={panelState.showNonTodScatter} />

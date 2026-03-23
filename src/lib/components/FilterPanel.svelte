@@ -144,6 +144,13 @@
 							<span class="label">Min. affordable dev. share (%)</span>
 							<input type="number" min="0" max="100" step="1" bind:value={panelState.nonTodMinAffordableSharePct} />
 						</label>
+						<label
+							class="field"
+							title="Minimum housing stock increase (%): tract MassBuilds new units in the selected period ÷ census housing units at period start. 0 = off. Tracts with no base stock fail when this is &gt; 0."
+						>
+							<span class="label">Min. stock increase (%)</span>
+							<input type="number" min="0" step="0.1" bind:value={panelState.nonTodMinStockIncreasePct} />
+						</label>
 					</div>
 					<div class="modes modes--tight">
 						<span class="label">Transit modes present</span>
@@ -177,6 +184,13 @@
 						>
 							<span class="label">Min. affordable dev. share (%)</span>
 							<input type="number" min="0" max="100" step="1" bind:value={panelState.todMinAffordableSharePct} />
+						</label>
+						<label
+							class="field"
+							title="Minimum housing stock increase (%): tract MassBuilds new units in the selected period ÷ census housing units at period start. 0 = off."
+						>
+							<span class="label">Min. stock increase (%)</span>
+							<input type="number" min="0" step="0.1" bind:value={panelState.todMinStockIncreasePct} />
 						</label>
 					</div>
 					<div class="modes modes--tight">
@@ -270,12 +284,27 @@
 				<input type="checkbox" bind:checked={panelState.showDevelopments} />
 				<span>Show developments</span>
 			</label>
+			<label
+				class="toggle-item"
+				title="Tint TOD analysis cohort tracts on the choropleth (accent color blended with the Y scale)"
+			>
+				<input type="checkbox" bind:checked={panelState.showMapTodCohortShade} />
+				<span>Highlight TOD tracts on map</span>
+			</label>
+			<label
+				class="toggle-item"
+				title="Tint non-TOD control cohort tracts on the choropleth (slate tone blended with the Y scale)"
+			>
+				<input type="checkbox" bind:checked={panelState.showMapControlCohortShade} />
+				<span>Highlight control (non-TOD) tracts on map</span>
+			</label>
 		</div>
 	</fieldset>
 </div>
 
 <style>
 	.filter-panel {
+		min-width: 0;
 		/* Tile fieldsets in columns where width allows; wraps to fewer columns on narrow panels */
 		display: grid;
 		grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));

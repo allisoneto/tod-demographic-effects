@@ -114,7 +114,9 @@ export function passesTractUniverse(tract, panelState) {
 export function tractMassbuildsAffordableShare(tract, timePeriod) {
 	const nu = Number(tract[`new_units_${timePeriod}`]) || 0;
 	if (nu <= 0) return null;
-	const na = Number(tract[`new_affordable_${timePeriod}`]) || 0;
+	const naRaw = Number(tract[`new_affordable_${timePeriod}`]) || 0;
+	// Baked tract columns can reflect raw MassBuilds; cap so share stays in [0, 1].
+	const na = Math.min(naRaw, nu);
 	return na / nu;
 }
 
@@ -146,6 +148,57 @@ export function passesCohortMinAffordableShare(tract, panelState, cohort) {
 }
 
 /**
+ * Housing stock increase (percent) from tract-level MassBuilds totals: new units
+ * in ``timePeriod`` divided by decennial census ``total_hu`` at the period start
+ * year. Aligns with scatter X ``pct_stock_increase`` when all projects are included
+ * (tract JSON aggregates are not filtered by development controls).
+ *
+ * Parameters
+ * ----------
+ * tract : object
+ * timePeriod : string
+ *     Panel period tag (e.g. ``'10_20'``).
+ *
+ * Returns
+ * -------
+ * number | null
+ *     Percent in ``[0, 100+]``, or ``null`` when base housing stock is missing or zero.
+ */
+export function tractHousingStockIncreasePct(tract, timePeriod) {
+	const { startY } = periodCensusBounds(timePeriod);
+	const nu = Number(tract[`new_units_${timePeriod}`]) || 0;
+	const baseStock = Number(tract[`total_hu_${startY}`]) || 0;
+	if (baseStock <= 0) return null;
+	return +((100 * nu) / baseStock).toFixed(4);
+}
+
+/**
+ * Cohort floor on housing stock increase (%). When the minimum is 0, passes.
+ * Tracts with no valid base stock fail if the minimum is positive.
+ *
+ * Parameters
+ * ----------
+ * tract : object
+ * panelState : object
+ * cohort : 'tod' | 'nonTod'
+ *
+ * Returns
+ * -------
+ * boolean
+ */
+export function passesCohortMinHousingStockIncreasePct(tract, panelState, cohort) {
+	const pctRaw =
+		cohort === 'tod'
+			? panelState.todMinStockIncreasePct
+			: panelState.nonTodMinStockIncreasePct;
+	const minPct = Math.max(0, Number(pctRaw) || 0);
+	if (minPct <= 0) return true;
+	const v = tractHousingStockIncreasePct(tract, panelState.timePeriod);
+	if (v == null) return false;
+	return v >= minPct;
+}
+
+/**
  * Tract qualifies for the user-defined non-TOD (control) cohort: optional max
  * stops/mi² ceiling plus non-TOD transit mode toggles.
  *
@@ -167,7 +220,8 @@ export function isNonTodCohortTract(tract, panelState) {
 	if (maxStops > 0 && stopsPerSqMi > maxStops) return false;
 	const modes = panelState.nonTodTransitModes ?? panelState.transitModes;
 	if (!tractMatchesTransitModes(tract, modes)) return false;
-	return passesCohortMinAffordableShare(tract, panelState, 'nonTod');
+	if (!passesCohortMinAffordableShare(tract, panelState, 'nonTod')) return false;
+	return passesCohortMinHousingStockIncreasePct(tract, panelState, 'nonTod');
 }
 
 /**
@@ -186,7 +240,8 @@ export function isTodCohortTract(tract, panelState) {
 	if (!isTodTract(tract, panelState.todMinStopsPerSqMi ?? 0)) return false;
 	const modes = panelState.todTransitModes ?? panelState.transitModes;
 	if (!tractMatchesTransitModes(tract, modes)) return false;
-	return passesCohortMinAffordableShare(tract, panelState, 'tod');
+	if (!passesCohortMinAffordableShare(tract, panelState, 'tod')) return false;
+	return passesCohortMinHousingStockIncreasePct(tract, panelState, 'tod');
 }
 
 /**
@@ -470,6 +525,30 @@ export function developmentMultifamilyShare(d) {
 }
 
 /**
+ * Affordable unit count for aggregation: cap ``affrd_unit`` at project ``hu``.
+ *
+ * MassBuilds sometimes lists more affordable units than total ``hu`` (field
+ * mismatch in the source). Summing uncapped values can make tract-level
+ * affordable units exceed new-unit totals; we cap per project so shares stay
+ * in ``[0, 1]``.
+ *
+ * Parameters
+ * ----------
+ * d : {{ hu?: number, affrd_unit?: number }}
+ *
+ * Returns
+ * -------
+ * number
+ *     Non-negative; at most ``hu`` when ``hu`` is positive.
+ */
+export function developmentAffordableUnitsCapped(d) {
+	const hu = Number(d.hu) || 0;
+	const aff = Number(d.affrd_unit) || 0;
+	if (hu <= 0) return 0;
+	return Math.min(aff, hu);
+}
+
+/**
  * Affordable share of a MassBuilds project: affordable units / total units.
  *
  * Parameters
@@ -484,7 +563,7 @@ export function developmentMultifamilyShare(d) {
 export function developmentAffordableShare(d) {
 	const hu = Number(d.hu) || 0;
 	if (hu <= 0) return null;
-	return (Number(d.affrd_unit) || 0) / hu;
+	return developmentAffordableUnitsCapped(d) / hu;
 }
 
 /**
@@ -565,7 +644,9 @@ export function developmentMatchesPeriod(d, tp) {
  * -------
  * Map<string, object>
  *     gisjoin -> { new_units, new_singfam, new_sm_multifam, new_lg_multifam,
- *                  new_affordable, pct_stock_increase, multifam_share, affordable_share }
+ *                  new_affordable, pct_stock_increase, multifam_share, affordable_share }.
+ *     ``new_affordable`` sums ``min(affrd_unit, hu)`` per project (see
+ *     ``developmentAffordableUnitsCapped``).
  */
 export function aggregateDevsByTract(filteredDevs, tractMap, timePeriod) {
 	const { startY: baseYear } = periodCensusBounds(timePeriod);
@@ -587,7 +668,7 @@ export function aggregateDevsByTract(filteredDevs, tractMap, timePeriod) {
 		agg.new_singfam += d.singfamhu;
 		agg.new_sm_multifam += d.smmultifam;
 		agg.new_lg_multifam += d.lgmultifam;
-		agg.new_affordable += d.affrd_unit;
+		agg.new_affordable += developmentAffordableUnitsCapped(d);
 	}
 
 	for (const [gj, agg] of result) {
@@ -689,6 +770,39 @@ export function getScatterXValue(tract, gisjoin, xBase, devAgg, timePeriod) {
 		return Number.isFinite(v) ? v : null;
 	}
 	return getXValue(gisjoin, xBase, devAgg);
+}
+
+/**
+ * Drop points outside ``±k`` marginal standard deviations on X and on Y (means
+ * and SDs from the full set). Intended to limit OLS leverage from extreme coordinates.
+ *
+ * If the filter would leave fewer than two points, returns the original array.
+ *
+ * Parameters
+ * ----------
+ * points : Array<{ x: number, y: number }>
+ * k : number, optional
+ *     Half-width in SD units; default ``10`` matches scatter axis trimming.
+ *
+ * Returns
+ * -------
+ * Array<{ x: number, y: number }>
+ */
+export function filterPointsTenSigmaMarginals(points, k = 10) {
+	if (!points?.length || points.length <= 2) return points;
+	const xs = points.map((p) => p.x);
+	const ys = points.map((p) => p.y);
+	const xMu = d3.mean(xs);
+	const yMu = d3.mean(ys);
+	const xVar = d3.variance(xs);
+	const yVar = d3.variance(ys);
+	const xSd = xVar != null && xVar > 0 ? Math.sqrt(xVar) : 0;
+	const ySd = yVar != null && yVar > 0 ? Math.sqrt(yVar) : 0;
+	const xOk = (v) => xSd <= 0 || (v >= xMu - k * xSd && v <= xMu + k * xSd);
+	const yOk = (v) => ySd <= 0 || (v >= yMu - k * ySd && v <= yMu + k * ySd);
+	const out = points.filter((p) => xOk(p.x) && yOk(p.y));
+	if (out.length < 2) return points;
+	return out;
 }
 
 /**

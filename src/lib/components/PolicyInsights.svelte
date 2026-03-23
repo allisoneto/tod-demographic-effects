@@ -6,13 +6,17 @@
 		getNonTodTracts,
 		aggregateDevsByTract,
 		computeRegression,
+		filterPointsTenSigmaMarginals,
 		filterDevelopments,
 		cohortYMeansForPanel,
+		computeGroupMean,
+		popWeightKey,
 		yMetricDisplayKind,
 		formatYMetricSummary,
 		transitModeUiLabel
 	} from '$lib/utils/derived.js';
-	import { periodDisplayLabel } from '$lib/utils/periods.js';
+	import { periodDisplayLabel, periodCensusBounds } from '$lib/utils/periods.js';
+	import PolicyCohortMap from '$lib/components/PolicyCohortMap.svelte';
 	import * as d3 from 'd3';
 
 	let timePeriod = $state('10_20');
@@ -20,6 +24,8 @@
 	let nonTodMaxStopsPerSqMi = $state(4);
 	let todMinAffordableSharePct = $state(0);
 	let nonTodMinAffordableSharePct = $state(0);
+	let todMinStockIncreasePct = $state(0);
+	let nonTodMinStockIncreasePct = $state(0);
 	let todTransitModes = $state({ rail: true, commuter_rail: true, bus: true });
 	let nonTodTransitModes = $state({ rail: true, commuter_rail: true, bus: true });
 
@@ -34,6 +40,16 @@
 	let minDevAffordableRatioPct = $state(0);
 	let includeRedevelopment = $state(true);
 
+	/**
+	 * How to split TOD tracts into high- vs. low-affordable-share groups for the additional comparison block.
+	 * ``median``: ≥ median vs. &lt; median. ``custom``: high ≥ high min %, low &lt; low max % (non-overlapping bands).
+	 */
+	let affShareSplitMode = $state('median');
+	/** Custom: affordable share of new development (0–1 scale) must be ≥ this percent to count as “high”. */
+	let affHighMinPct = $state(20);
+	/** Custom: share must be &lt; this percent to count as “low”. Require high min &gt; low max so bands don’t overlap. */
+	let affLowMaxPct = $state(10);
+
 	const panelConfig = $derived({
 		timePeriod,
 		minStopsPerSqMi,
@@ -43,6 +59,8 @@
 		nonTodTransitModes,
 		todMinAffordableSharePct,
 		nonTodMinAffordableSharePct,
+		todMinStockIncreasePct,
+		nonTodMinStockIncreasePct,
 		minPopulation,
 		minPopDensity,
 		minHuChange,
@@ -128,10 +146,94 @@
 		return aggregateDevsByTract(filteredDevs, tractMap, timePeriod);
 	});
 
+	/** TOD tracts with filtered MassBuilds affordable-share data; split into high / low per user rules. */
+	const affSplitCohorts = $derived.by(() => {
+		void cohortComparisonKey;
+		void affShareSplitMode;
+		void affHighMinPct;
+		void affLowMaxPct;
+		const tod = todRows;
+		const todAff = tod.filter((t) => {
+			const agg = affShareMap.get(t.gisjoin);
+			return agg && Number.isFinite(agg.affordable_share);
+		});
+		const getAffShare = (t) => affShareMap.get(t.gisjoin)?.affordable_share ?? NaN;
+		let hiAff = [];
+		let loAff = [];
+		let splitDescription = '';
+		if (affShareSplitMode === 'median') {
+			const medAff = d3.median(todAff, getAffShare);
+			if (Number.isFinite(medAff)) {
+				hiAff = todAff.filter((t) => getAffShare(t) >= medAff);
+				loAff = todAff.filter((t) => getAffShare(t) < medAff);
+				splitDescription = `median affordable share (${(medAff * 100).toFixed(1)}%): high \u2265 median, low &lt; median`;
+			}
+		} else {
+			const hiTh = Math.min(100, Math.max(0, Number(affHighMinPct) || 0)) / 100;
+			const loTh = Math.min(100, Math.max(0, Number(affLowMaxPct) || 0)) / 100;
+			if (hiTh > loTh) {
+				hiAff = todAff.filter((t) => getAffShare(t) >= hiTh);
+				loAff = todAff.filter((t) => getAffShare(t) < loTh);
+				splitDescription = `high \u2265${affHighMinPct}% vs. low &lt;${affLowMaxPct}% (tracts between these cutoffs are excluded)`;
+			} else {
+				splitDescription =
+					'set \u201chigh\u201d minimum above \u201clow\u201d maximum to define non-overlapping groups';
+			}
+		}
+		const customBandsValid = affShareSplitMode === 'median' || affHighMinPct > affLowMaxPct;
+		return {
+			todAff,
+			hiAff,
+			loAff,
+			splitDescription,
+			customBandsValid
+		};
+	});
+
+	const affSplitComparisonKey = $derived(
+		`${cohortComparisonKey}|${affShareSplitMode}|${affHighMinPct}|${affLowMaxPct}`
+	);
+
+	/** Population-weighted means for every Y: high vs. low affordable-share TOD tracts (mirrors main outcomes block). */
+	const affSplitRowsByY = $derived.by(() => {
+		void affSplitComparisonKey;
+		void meta.yVariables?.length;
+		const { hiAff, loAff, customBandsValid } = affSplitCohorts;
+		if (!customBandsValid) return [];
+		const tp = timePeriod;
+		const weightKey = popWeightKey(tp);
+		const { startY } = periodCensusBounds(tp);
+		const weightLabel = `population in ${startY} (start of selected period)`;
+		const rows = [];
+		for (const v of meta.yVariables ?? []) {
+			const yKey = `${v.key}_${tp}`;
+			const meanHi = computeGroupMean(hiAff, yKey, weightKey);
+			const meanLo = computeGroupMean(loAff, yKey, weightKey);
+			const kind = yMetricDisplayKind(v);
+			const nHiWithY = hiAff.filter(
+				(t) => t[yKey] != null && Number.isFinite(Number(t[yKey]))
+			).length;
+			const nLoWithY = loAff.filter(
+				(t) => t[yKey] != null && Number.isFinite(Number(t[yKey]))
+			).length;
+			rows.push({
+				key: v.key,
+				label: v.label ?? v.key,
+				catLabel: v.catLabel ?? 'Outcomes',
+				fmtHi: formatYMetricSummary(meanHi, kind),
+				fmtLo: formatYMetricSummary(meanLo, kind),
+				nHi: hiAff.length,
+				nLo: loAff.length,
+				nHiWithY,
+				nLoWithY,
+				weightLabel
+			});
+		}
+		return rows;
+	});
+
 	const keyFindings = $derived.by(() => {
 		const tp = timePeriod;
-		const mk = `minority_pct_change_${tp}`;
-		const ok = `owner_pct_change_${tp}`;
 		const tk = `transit_pct_change_${tp}`;
 
 		const tod = todRows;
@@ -141,19 +243,6 @@
 			const agg = affShareMap.get(t.gisjoin);
 			return agg && Number.isFinite(agg.affordable_share);
 		});
-		const getAffShare = (t) => affShareMap.get(t.gisjoin)?.affordable_share ?? NaN;
-		const medAff = d3.median(todAff, getAffShare);
-		let hiAff = [];
-		let loAff = [];
-		if (Number.isFinite(medAff)) {
-			hiAff = todAff.filter((t) => getAffShare(t) >= medAff);
-			loAff = todAff.filter((t) => getAffShare(t) < medAff);
-		}
-
-		const hiM = meanFinite(hiAff, mk);
-		const loM = meanFinite(loAff, mk);
-		const hiO = meanFinite(hiAff, ok);
-		const loO = meanFinite(loAff, ok);
 
 		const rail = rows.filter((t) => t.has_rail === true);
 		const noRail = rows.filter((t) => t.has_rail !== true);
@@ -161,40 +250,6 @@
 		const noRailT = meanFinite(noRail, tk);
 
 		const cards = [];
-
-		if (hiAff.length && loAff.length && Number.isFinite(hiM) && Number.isFinite(loM)) {
-			const gap = hiM - loM;
-			cards.push({
-				id: 'aff-minority',
-				title: 'Minority share change (high vs. low affordable share among TOD)',
-				value: fmtMetric(hiM, 'pp'),
-				compare: `vs ${fmtMetric(loM, 'pp')} in below-median affordable-share TOD tracts`,
-				blurb:
-					Math.abs(gap) < 0.5
-						? 'Above- and below-median affordable delivery TOD tracts show similar average minority share trends\u2014zoning tools should still target equitable siting.'
-						: gap > 0
-							? 'Higher-affordability TOD tracts averaged larger minority share increases\u2014interpret alongside investment timing; inclusionary policy remains a lever, not a guarantee of stability.'
-							: 'Lower-affordability TOD tracts averaged larger minority share increases\u2014markets with less subsidized share may be experiencing sharper turnover.',
-				tone: toneForSignedMetric(hiM)
-			});
-		}
-
-		if (hiAff.length && loAff.length && Number.isFinite(hiO) && Number.isFinite(loO)) {
-			const gap = hiO - loO;
-			cards.push({
-				id: 'aff-owner',
-				title: 'Owner-occupied share change (high vs. low affordable share among TOD)',
-				value: fmtMetric(hiO, 'pp'),
-				compare: `vs ${fmtMetric(loO, 'pp')} in below-median affordable-share TOD tracts`,
-				blurb:
-					gap > 0.3
-						? 'TOD tracts with more affordable share of new development retained owner-occupied share better on average\u2014supports pairing production mandates with anti-displacement guardrails.'
-						: gap < -0.3
-							? 'Below-median affordable-share TOD tracts saw stronger owner-occupied share trends in the aggregate\u2014affordability share alone does not capture market heat or tenure transitions.'
-							: 'Owner-occupied share trends were similar across affordable-share splits\u2014continue tracking tenure alongside new supply.',
-				tone: toneForSignedMetric(hiO)
-			});
-		}
 
 		if (rail.length && noRail.length && Number.isFinite(railT) && Number.isFinite(noRailT)) {
 			const gap = railT - noRailT;
@@ -213,7 +268,7 @@
 			});
 		}
 
-		return { cards, nTracts: rows.length, nTod: tod.length, nNonTod: nonTod.length, todAffN: todAff.length, medAff };
+		return { cards, nTracts: rows.length, nTod: tod.length, nNonTod: nonTod.length, todAffN: todAff.length };
 	});
 
 	const regressionNote = $derived.by(() => {
@@ -228,8 +283,10 @@
 			})
 			.filter(Boolean);
 		if (points.length < 3) return null;
-		const { slope, r2 } = computeRegression(points);
-		return { n: points.length, slope, r2 };
+		const fitted = filterPointsTenSigmaMarginals(points);
+		if (fitted.length < 2) return null;
+		const { slope, r2 } = computeRegression(fitted);
+		return { n: fitted.length, nTotal: points.length, slope, r2 };
 	});
 
 	const recommendations = [
@@ -316,6 +373,13 @@
 						<span class="filter-label">Min aff. %</span>
 						<input type="number" min="0" max="100" step="1" bind:value={todMinAffordableSharePct} />
 					</label>
+					<label
+						class="filter-field"
+						title="Min housing stock increase (%): tract new units ÷ census HU at period start; 0 = off"
+					>
+						<span class="filter-label">Min Δstock %</span>
+						<input type="number" min="0" step="0.1" bind:value={todMinStockIncreasePct} />
+					</label>
 					<div class="filter-chips">
 						{#each Object.keys(todTransitModes) as key (key)}
 							<button
@@ -337,7 +401,8 @@
 			<p class="filter-hint">
 				Which MassBuilds projects count toward <strong>affordable-share</strong> splits and the regression note
 				below. Cohort definitions and census Y means still use tract fields only; TOD / non-TOD
-				&ldquo;min aff. %&rdquo; rules use full-tract MassBuilds totals (same as the dashboard).
+				&ldquo;min aff. %&rdquo; and &ldquo;min Δstock %&rdquo; use full-tract MassBuilds totals (same as the
+				dashboard), not these per-project filters.
 			</p>
 			<div class="filter-row filter-row--dev">
 				<label
@@ -377,6 +442,16 @@
 			</label>
 		</fieldset>
 	</div>
+
+	<!-- ── Cohort geography (matches filters above) ───────────────── -->
+	<section class="section section--cohort-map" aria-labelledby="cohort-map-heading">
+		<h2 id="cohort-map-heading" class="section-title">TOD vs. non-TOD tracts on the map</h2>
+		<p class="section-lead">
+			Each tract is colored by the same TOD and non-TOD (control) rules as the tables below. Tracts that pass overall
+			filters but match neither cohort appear in slate; tracts that fail overall filters stay subdued.
+		</p>
+		<PolicyCohortMap panelConfig={panelConfig} />
+	</section>
 
 	<!-- ── TOD vs control: all Y outcomes (dashboard-style) ── -->
 	<section class="section" aria-labelledby="outcomes-heading">
@@ -435,12 +510,111 @@
 		{/if}
 	</section>
 
-	<!-- ── Additional comparisons (narrative) ───────────── -->
-	{#if keyFindings.cards.length > 0}
-		<section class="section" aria-labelledby="findings-heading">
-			<h2 id="findings-heading" class="section-title">Additional comparisons</h2>
-			<p class="section-lead">
-				Descriptive splits beyond the TOD vs. control cohort means (simple averages within subgroups).
+	<!-- ── Additional comparisons ─────────────────────────── -->
+	<section class="section" aria-labelledby="findings-heading">
+		<h2 id="findings-heading" class="section-title">Additional comparisons</h2>
+
+		<div class="aff-split-block">
+			<h3 class="subsection-title">TOD: high vs. low affordable development share</h3>
+			<p class="section-lead section-lead--tight">
+				Among TOD tracts with MassBuilds affordable-share data under your development filters (
+				{affSplitCohorts.todAff.length.toLocaleString()} tracts), compare population-weighted outcome means
+				({periodLabel}) for a <strong>high</strong> vs. <strong>low</strong> affordable-share group.
+			</p>
+
+			<fieldset class="aff-split-controls">
+				<legend class="aff-split-legend">Split definition</legend>
+				<div class="aff-split-mode-row">
+					<label class="aff-split-radio">
+						<input type="radio" bind:group={affShareSplitMode} name="aff-split-mode" value="median" />
+						<span>Median split</span>
+					</label>
+					<label class="aff-split-radio">
+						<input type="radio" bind:group={affShareSplitMode} name="aff-split-mode" value="custom" />
+						<span>Custom % cutoffs</span>
+					</label>
+				</div>
+				{#if affShareSplitMode === 'custom'}
+					<div class="aff-split-threshold-row">
+						<label class="filter-field aff-split-field" title="TOD tract counts as high if affordable share of new units ≥ this %">
+							<span class="filter-label">High: min. share (%)</span>
+							<input type="number" min="0" max="100" step="1" bind:value={affHighMinPct} />
+						</label>
+						<label class="filter-field aff-split-field" title="TOD tract counts as low if affordable share &lt; this % (must be less than high min)">
+							<span class="filter-label">Low: below (%)</span>
+							<input type="number" min="0" max="100" step="1" bind:value={affLowMaxPct} />
+						</label>
+					</div>
+					{#if affHighMinPct <= affLowMaxPct}
+						<p class="aff-split-warn" role="status">
+							Set the high minimum <strong>above</strong> the low cutoff so the two groups do not overlap.
+						</p>
+					{/if}
+				{/if}
+				<p class="aff-split-meta">
+					<strong>Current rule:</strong>
+					{affSplitCohorts.splitDescription}
+					· High <code class="aff-split-code">{affSplitCohorts.hiAff.length}</code> tracts, low
+					<code class="aff-split-code">{affSplitCohorts.loAff.length}</code> tracts.
+				</p>
+			</fieldset>
+
+			{#if !affSplitCohorts.customBandsValid}
+				<div class="empty-card" role="status">
+					<p>Adjust the custom cutoffs to view comparisons.</p>
+				</div>
+			{:else if affSplitCohorts.hiAff.length === 0 || affSplitCohorts.loAff.length === 0}
+				<div class="empty-card" role="status">
+					<p>
+						No tracts in one or both groups with the current split. Try different filters, development rules,
+						or cutoffs.
+					</p>
+				</div>
+			{:else if affSplitRowsByY.length === 0}
+				<div class="empty-card" role="status">
+					<p>No outcome metrics loaded.</p>
+				</div>
+			{:else}
+				<p class="section-lead section-lead--tight aff-split-weight-note">
+					Means weighted by tract {affSplitRowsByY[0].weightLabel} (same as the TOD vs. non-TOD block above).
+				</p>
+				<div class="outcome-comparison-list">
+					{#each affSplitRowsByY as row, i (row.key)}
+						{#if i === 0 || affSplitRowsByY[i - 1].catLabel !== row.catLabel}
+							<h3 class="outcome-cat-heading">{row.catLabel}</h3>
+						{/if}
+						<div
+							class="cohort-summary policy-cohort-block"
+							role="group"
+							aria-label="{row.label}: high vs. low affordable-share TOD means"
+						>
+							<p class="cohort-summary-heading">{row.label}</p>
+							<div class="cohort-summary-grid">
+								<div class="cohort-pill cohort-pill--high-aff">
+									<span class="cohort-pill-label">High aff. share (TOD)</span>
+									<span class="cohort-pill-value">{row.fmtHi}</span>
+									<span class="cohort-pill-n">
+										{row.nHiWithY} / {row.nHi} tracts with data
+									</span>
+								</div>
+								<div class="cohort-pill cohort-pill--low-aff">
+									<span class="cohort-pill-label">Low aff. share (TOD)</span>
+									<span class="cohort-pill-value">{row.fmtLo}</span>
+									<span class="cohort-pill-n">
+										{row.nLoWithY} / {row.nLo} tracts with data
+									</span>
+								</div>
+							</div>
+						</div>
+					{/each}
+				</div>
+			{/if}
+		</div>
+
+		{#if keyFindings.cards.length > 0}
+			<h3 class="subsection-title subsection-title--follow">Other descriptive splits</h3>
+			<p class="section-lead section-lead--tight">
+				Simple <strong>unweighted</strong> tract averages (not population-weighted) for quick context.
 			</p>
 			<div class="findings-grid">
 				{#each keyFindings.cards as card (card.id)}
@@ -452,8 +626,8 @@
 					</article>
 				{/each}
 			</div>
-		</section>
-	{/if}
+		{/if}
+	</section>
 
 	<section class="section" aria-labelledby="rec-heading">
 		<h2 id="rec-heading" class="section-title">Policy recommendations</h2>
@@ -490,8 +664,12 @@
 		</p>
 		{#if regressionNote}
 			<p class="method-reg">
-				Among TOD tracts with affordable-share data (<code>n = {regressionNote.n}</code>), an ordinary least-squares
-				line of minority share change on affordable share of new development ({periodLabel}) has slope
+				Among TOD tracts with affordable-share data (<code>n = {regressionNote.n}</code>
+				{#if regressionNote.n < regressionNote.nTotal}
+					after dropping points outside &plusmn;10&sigma; on affordable share and on minority share change (marginal),
+					of <code>{regressionNote.nTotal}</code> with data
+				{/if}), an ordinary least-squares line of minority share change on affordable share of new development
+				({periodLabel}) has slope
 				<code>{fmtPP(regressionNote.slope)}</code> percentage points per unit affordable share and
 				<code>R² = {fmtR2(regressionNote.r2)}</code>—a reminder that single-variable fits explain limited variance.
 			</p>
@@ -700,6 +878,104 @@
 		max-width: 52rem;
 	}
 
+	.section-lead--tight {
+		margin-bottom: 10px;
+	}
+
+	.subsection-title {
+		font-size: 0.9375rem;
+		font-weight: 600;
+		color: var(--text);
+		margin: 0 0 6px;
+		line-height: 1.3;
+	}
+
+	.subsection-title--follow {
+		margin-top: 28px;
+	}
+
+	.aff-split-block {
+		margin-bottom: 8px;
+	}
+
+	.aff-split-controls {
+		border: 1px solid var(--border);
+		border-radius: var(--radius-sm);
+		padding: 10px 12px 12px;
+		margin: 0 0 16px;
+		background: color-mix(in srgb, var(--bg-panel) 70%, var(--bg-card));
+	}
+
+	.aff-split-legend {
+		font-size: 0.65rem;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+		color: var(--accent);
+		padding: 0 2px;
+	}
+
+	.aff-split-mode-row {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 12px 18px;
+		margin: 8px 0 10px;
+	}
+
+	.aff-split-radio {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		font-size: 0.8125rem;
+		color: var(--text-muted);
+		cursor: pointer;
+	}
+
+	.aff-split-radio input {
+		accent-color: var(--accent);
+		margin: 0;
+	}
+
+	.aff-split-threshold-row {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 10px;
+		align-items: flex-end;
+		margin-bottom: 8px;
+	}
+
+	.aff-split-field.filter-field input {
+		width: 5rem;
+	}
+
+	.aff-split-warn {
+		font-size: 0.8125rem;
+		color: var(--danger);
+		margin: 0 0 8px;
+		line-height: 1.4;
+	}
+
+	.aff-split-meta {
+		font-size: 0.8125rem;
+		color: var(--text-muted);
+		line-height: 1.45;
+		margin: 0;
+		max-width: 48rem;
+	}
+
+	.aff-split-code {
+		font-family: var(--font-mono, monospace);
+		font-size: 0.85em;
+		padding: 1px 4px;
+		border-radius: var(--radius-sm);
+		background: var(--bg-card);
+		color: var(--text);
+	}
+
+	.aff-split-weight-note {
+		margin-top: 4px;
+	}
+
 	/* Dashboard-aligned TOD vs control blocks (matches AnalysisPanel cohort summary). */
 	.outcome-comparison-list {
 		display: flex;
@@ -795,6 +1071,24 @@
 
 	.cohort-pill--ctrl .cohort-pill-value {
 		color: #64748b;
+	}
+
+	.cohort-pill--high-aff {
+		background: color-mix(in srgb, #059669 10%, var(--bg-panel));
+		border-color: color-mix(in srgb, #059669 32%, var(--border));
+	}
+
+	.cohort-pill--high-aff .cohort-pill-value {
+		color: #059669;
+	}
+
+	.cohort-pill--low-aff {
+		background: color-mix(in srgb, #78716c 10%, var(--bg-panel));
+		border-color: color-mix(in srgb, #78716c 30%, var(--border));
+	}
+
+	.cohort-pill--low-aff .cohort-pill-value {
+		color: #57534e;
 	}
 
 	.cohort-pill-n {
