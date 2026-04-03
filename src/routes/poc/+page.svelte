@@ -482,7 +482,7 @@
 	     ═══════════════════════════════════════════════════════ -->
 	<section class="hero-full card">
 		<div class="eyebrow">Proof of Concept</div>
-		<h1>TOD works for affordability only when lower-income households can still claim the new housing.</h1>
+		<h1>TOD's link with gentrification: how affordability helps.</h1>
 		<p class="subtitle">
 			As Massachusetts works to encourage transit-oriented development, policymakers should be aware
 			that this development can cause displacement, gentrification, and other demographic changes.
@@ -507,7 +507,7 @@
 	<section class="dashboard">
 		<aside class="controls card">
 			<h2>Controls</h2>
-			<p class="controls-note">Keep this simple: adjust the time window, the TOD distance definition, and the municipality scope.</p>
+			<p class="controls-note">Primary controls: adjust the time window, the TOD distance definition, and the municipality scope.</p>
 
 			<div class="control-block">
 				<label class="label">Completion year range</label>
@@ -600,13 +600,14 @@
 		<div class="content">
 			<!-- ── Summary stats ─────────────────────────── -->
 			<section class="summary card">
-				<h2>How to read the evidence</h2>
+				<h2>Summary of Selected Data</h2>
 				<p class="chart-note">
 					From <strong>{yearStart}</strong> through <strong>{yearEnd}</strong>, the visible municipalities
 					average <strong>{summary.avgIncome.toFixed(1)}%</strong> of households under $125k.
 					<strong>{summary.todDominantCount}</strong> of the {summary.selectionCount} selected-or-visible
-					municipalities are currently TOD-dominant by unit count, and the weighted affordable share is
-					<strong>{fmtPct1(summary.avgAffordable || 0)}</strong>.
+					municipalities are currently TOD-dominant by unit count.
+					<!-- , and the weighted affordable share is
+					<strong>{fmtPct1(summary.avgAffordable || 0)}</strong>. -->
 				</p>
 				<div class="summary-grid">
 					<div class="summary-stat"><div class="k">Municipalities shown</div><div class="v">{fmtInt(summary.muniCount)}</div></div>
@@ -627,11 +628,10 @@
 
 			<!-- ── 2. How much TOD? ─────────────────────── -->
 			<section class="story card">
-				<h2>How much TOD is actually happening?</h2>
+				<h2>How much TOD is actually being built?</h2>
 				<p>
-					Too much of the growth still lands outside TOD. This chart shows how the yearly growth mix
-					splits between TOD and non-TOD projects. If most added units remain outside the TOD threshold,
-					transit-oriented growth is not scaling fast enough to counter displacement pressure.
+					Despite policy efforts, most new housing being built consists of non-TOD units. However, total development has increased over time,
+					so the volume of TOD units has also been increasing. This pattern may change as the incentives of the MBTA Communities Act begin to take effect.
 				</p>
 			</section>
 
@@ -643,8 +643,7 @@
 				<section class="chart-card card">
 					<h3>When production rises, affordability often lags</h3>
 					<p class="chart-note">
-						Bars show total units by year. The line shows affordable share. Rising production without a
-						rising affordable share is the clearest sign that TOD is not yet operating as anti-displacement policy.
+						In recent years, despite increasing total production, the share of affordable newly-constructed units has decreased significantly.
 					</p>
 					<div class="chart-wrap small-chart" bind:this={elTimeline}></div>
 				</section>
@@ -652,28 +651,24 @@
 
 			<!-- ── 3. Where is it happening? ────────────── -->
 			<section class="story card">
-				<h2>Where is it happening?</h2>
+				<h2>Where is TOD taking place?</h2>
 				<p>
-					Pressure is concentrating in a small set of municipalities. The scatter below shows that
-					growth is not consistently reaching lower-income municipalities. Each point is a municipality:
-					<strong>X</strong> = share of households under $125k, <strong>Y</strong> = new development,
-					<strong>size</strong> = affordable units, <strong>fill</strong> = affordable share,
-					<strong>stroke</strong> = whether most visible units fall inside or outside the TOD threshold.
+					Development is not distributed evenly across Massachusetts, and transit-oriented development is specifically concentrated in lower-income municipalities.
 				</p>
 			</section>
 
 			<section class="chart-card card">
-				<h2>Growth is not consistently reaching lower-income municipalities</h2>
+				<h2>Lower-income municipalities see the most TOD</h2>
 				<div class="chart-wrap" bind:this={elScatter}></div>
 			</section>
 
 			<div class="small-grid">
 				<section class="chart-card card">
-					<h3>Pressure is concentrating in a small set of municipalities</h3>
-					<p class="chart-note">
+					<h3>New development is concentrated in a small set of municipalities</h3>
+					<!-- <p class="chart-note">
 						Darker fill means more affordability inside that growth. Large growth with low affordability
 						is the clearest gentrification-warning pattern.
-					</p>
+					</p> -->
 					<div class="chart-wrap small-chart" bind:this={elRanked}></div>
 				</section>
 				<section class="chart-card card">
@@ -696,9 +691,9 @@
 			<!-- ── 4. Most not affordable ───────────────── -->
 			<div class="story-chart-row story-chart-row--muni">
 				<section class="story card story-chart-text">
-					<h2>Most of it is not affordable</h2>
+					<h2>The issue of affordability</h2>
 					<p>
-						A central tension in the data lies in the gap between housing supply and genuine affordability.
+						A primary concern for many residents is the gap between housing supply and genuine affordability.
 						Although TOD projects often increase the total number of housing units, a greater proportion
 						are market-rate and therefore unprotected. For low-to-moderate income households, the benefit
 						of reduced transportation costs is then negated by the sharp rise in rent — and as a result,
@@ -709,9 +704,8 @@
 				<section class="chart-card card story-chart-plot">
 					<h3>Most new housing is still market-rate</h3>
 					<p class="chart-note">
-						This yearly composition shows whether added housing is protected affordable or mostly
-						market-rate. If market-rate dominates year after year, TOD growth is less likely to reduce
-						displacement pressure on its own.
+						The percentage of new development that is affordable has decreased significantly in recent years,
+						which likely indicates that lower-income residents are benefitting much less from the new development.
 					</p>
 					<div class="chart-wrap small-chart compact-side-chart" bind:this={elAffordMix}></div>
 				</section>
@@ -719,18 +713,19 @@
 
 			<!-- ── 5. Displacement explanation ──────────── -->
 			<section class="story card">
-				<h2>Development of market-rate housing can cause displacement pressure</h2>
+				<h2>The relationship between new development and gentrification</h2>
 				<p>
-					This project points to several indicative factors of gentrification:
+					There are many indicators that new development is associated with gentrification, including:
 				</p>
 				<ul class="story-list">
+					<li>Sharp increase in median income, often serving as a <strong>lead indicator for rising housing costs</strong></li>
+					<li>Rapid increase in the percentage of residents with bachelor's degrees or higher</li>
 					<li>A shift from owner-occupied housing to high-turnover rental units</li>
 					<li>Replacement of "legacy" small businesses with high-end retail and services tailored to a wealthier demographic</li>
-					<li>Rapid increase in the percentage of residents with bachelor's degrees or higher, often serving as a <strong>lead indicator for rising housing costs</strong></li>
 				</ul>
 				<p>
 					With the transit premium shifting the demographic profile of neighborhoods, high-income
-					professionals attracted by commute efficiency create a polarized economic landscape. Areas
+					professionals attracted by commute efficiency change the economic landscape. Areas
 					near public transit see rising property values, and without affordability protections, this
 					process accelerates displacement of vulnerable populations.
 				</p>
@@ -739,17 +734,15 @@
 			<!-- ── 6. Higher-vulnerability areas ─────────── -->
 			<div class="story-chart-row story-chart-row--muni">
 				<section class="story card story-chart-text">
-					<h2>Moreover, development is concentrated in higher-vulnerability municipalities</h2>
+					<h2>The communities most at risk of gentrification are seeing the most development</h2>
 					<p>
-						Higher-vulnerability municipalities do not consistently capture growth. The chart shows
-						what share of yearly development lands in municipalities above versus below the regional
-						under-$125k median. If the higher-vulnerability line stays low, growth is bypassing the places
-						most exposed to displacement pressure.
+						Municipalities with more households whose incomes are below $125k are seeing greater new development.
+						These areas are both the most vulnerable, and the most likely to be affected.
 					</p>
 				</section>
 
 				<section class="chart-card card story-chart-plot">
-					<h3>Where yearly growth lands (vulnerability median split)</h3>
+					<h3>Development in above-median vulnerability municipalities vs below-median vulnerability municipalities</h3>
 					<div class="chart-wrap small-chart compact-side-chart" bind:this={elGrowthCapture}></div>
 				</section>
 			</div>
@@ -762,14 +755,21 @@
 	<section class="tract-section">
 		<!-- ── 7. Transition to tract analysis ──────────── -->
 		<section class="story card full-width">
-			<h2>So, what effect does TOD have on demographics?</h2>
+			<h2>How does this TOD affect specific demographics?</h2>
+			<p>
+				The impact of gentrification can be investigated by looking at how specific demographics change
+				as new development occurs.
+			</p>
+			<h4>Data analysis methodology</h4>
 			<p>
 				Development, transit-oriented or otherwise, often results in demographic change. In order to
 				isolate the influence of TOD from the influence of development generally, we filter out all
 				census tracts with <strong>minimal development</strong> (less than 2% increase in housing
 				stock), since these are likely to show different demographic changes than high-development
 				tracts. Among high-development tracts, we compare primarily <strong>TOD-dominated tracts</strong>
-				with primarily <strong>non-TOD-dominated tracts</strong>.
+				(where TOD units make up at least 50% of new development)
+				with primarily <strong>non-TOD-dominated tracts</strong>
+				(where TOD units make up less than 50% of new development).
 			</p>
 			<p>
 				The TOD distance threshold of <strong>{threshold.toFixed(2)} miles</strong> from Part 1
@@ -791,7 +791,12 @@
 		{:else}
 			<!-- Tract cohort map -->
 			<section class="chart-card card full-width">
-				<h3>Neighborhood change (tract, 2010–20 window)</h3>
+				<h3>Tract categorizations and demographic change overview (tract, 2010–20 window)</h3>
+				<p class="chart-note">
+					TOD-dominated tracts are generally concentrated closer to Boston, but also exist further away (often
+					near commuter rail stations). Moreover, some very urban tracts are non-TOD dominated, as despite having
+					access to transit, their development is primarily single-family.
+				</p>
 				<div class="chart-toolbar">
 					<label for="poc-tract-map-metric" style="margin:0">Layer</label>
 					<select id="poc-tract-map-metric" bind:value={tractMapMetric}>
@@ -850,8 +855,8 @@
 							<strong>{eduRow.fmtCtrl}</strong> in non-TOD dominated tracts and
 							<strong>{eduRow.fmtMinimal}</strong> in minimal development tracts.
 						{/if}
-						Rapid increase in the percentage of residents with bachelor's degrees or higher often serves
-						as a <strong>lead indicator for rising housing costs</strong>.
+						Since education is uncommon later in life, changes in education levels are usually the result
+						of new residents moving in, and often correspond wealthier residents and rising housing costs.
 					</p>
 				</section>
 
@@ -872,13 +877,15 @@
 				<p class="chart-note">
 					Population-weighted means (MassBuilds cohort tiers); bars compare TOD-dominated,
 					non-TOD-dominated significant development, and minimal development tracts.
+					TOD-dominated tracts see greater income and education increases than both non-TOD
+					dominated and minimal development tracts.
 				</p>
 				<div class="chart-wrap small-chart" bind:this={elTractEdu}></div>
 			</section>
 
 			<!-- ── 10. How affordability helps ──────────── -->
 			<section class="story card full-width">
-				<h2>How increased affordability can help</h2>
+				<h2>How increased affordability can mitigate these effects</h2>
 				<p>
 					Among TOD-dominated tracts, we compare those where <strong>at least half</strong> of new
 					development is affordable (≥{(affSplitCohorts.affSplitThreshold * 100).toFixed(0)}% affordable share)
@@ -896,11 +903,11 @@
 						tracts</strong> — the demographic disruption is moderated.
 					</p>
 				{/if}
-				<p>
+				<!-- <p>
 					The benefit of reduced transportation costs is negated by the sharp rise in rent when
 					affordability protections are absent. When affordable units are included, the displacement
 					pressure is reduced.
-				</p>
+				</p> -->
 			</section>
 
 			<!-- ── 11. Bottom line ──────────────────────── -->
@@ -963,18 +970,19 @@
 				<h2>Conclusion</h2>
 				<p>
 					TOD is associated with gentrification, but these effects can be mitigated by increasing the
-					share of TOD units that are affordable. This narrative highlights that <strong>inclusionary
+					share of TOD units that are affordable. 
+					<!-- This narrative highlights that <strong>inclusionary
 					zoning</strong>, <strong>rent stabilization</strong>, and <strong>subsidized transit passes</strong>
-					are key to preventing housing exclusivity.
+					are key to preventing housing exclusivity. -->
 				</p>
 				<p>
-					Without these controls, TOD naturally moves towards exclusionary policy — transit accessibility
-					is simultaneously a public good and a risk. <strong>Without necessary guardrails, TOD may
+					Without affordable housing controls, TOD naturally moves towards exclusionary policy. 
+					When considering housing, transit accessibility
+					is simultaneously a public good and a risk -- <strong>without necessary guardrails, TOD may
 					inadvertently displace vulnerable populations.</strong>
 				</p>
 				<p>
-					The policy answer is not less TOD. It is <strong>more affordability inside TOD, at the same
-					time as growth</strong>.
+					The policy answer is not less TOD. It is <strong>more affordability inside TOD</strong>.
 				</p>
 			</section>
 		{/if}
